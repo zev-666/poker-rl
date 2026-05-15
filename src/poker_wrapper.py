@@ -4,6 +4,8 @@ from gymnasium import spaces
 from pokerenv.table import Table
 from pokerenv.common import PlayerAction, Action
 import pokerenv.obs_indices as indices
+from hand_evaluator import HandEvaluator
+from treys import Card as TreysCard, Deck
 
 OBS_DIM    = 72
 NUM_PLAYERS = 6
@@ -24,30 +26,25 @@ class PokerGymWrapper(gym.Env):
         self.trained_seat = 0
         self.other_seats = [1,2,3,4,5]
         self.done = False
-        self.final_reward = 0.0  # 累积到游戏结束的奖励
+        self.hand_eval = HandEvaluator()
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.table.reset()
         self.done = False
-        self.final_reward = 0.0
         self._skip_to_our_turn()
         obs = self._encode_obs()
         return obs, {}
 
     def step(self, action: int):
-        # 1. 训练智能体行动
         env_action = self._decode_action(action)
-        _, reward_all, done_agent, _ = self.table.step(env_action)
+        raw_obs, reward_all, done_agent, _ = self.table.step(env_action)
         self.done = done_agent
-        # 用 step 返回的奖励，不用 get_reward()
         self.final_reward = float(reward_all[self.trained_seat])
 
-        # 2. 如果未结束，让对手行动，同时捕获对手回合的结束奖励
         if not self.done:
             self.final_reward += self._run_opponents()
 
-        # 3. 最终奖励：游戏结束时是累积的 reward，否则为 0
         if self.done:
             reward = self.final_reward
         else:
@@ -129,7 +126,6 @@ class PokerGymWrapper(gym.Env):
             self._random_opponent_step()
 
     def _run_opponents(self) -> float:
-        """让对手行动直到轮到我方或游戏结束，返回对手回合中产生的我方奖励"""
         opponent_reward = 0.0
         while self.table.current_player_i != self.trained_seat and not self.done:
             _, r_all, self.done, _ = self._random_opponent_step()
@@ -158,4 +154,47 @@ class PokerGymWrapper(gym.Env):
         return float(shaped)
 
     def _estimate_hand_strength(self, hole_cards, community_cards) -> float:
-        return 0.5
+        """
+        使用蒙特卡洛模擬估算手牌勝率 (0~1)。
+        解決 pokerenv 的整數編碼與 treys 標準不兼容的問題。
+        """
+        try:
+            # 1. 轉換我方手牌為字串 (直接使用 pokerenv 的 int_to_str，保證相容)
+            hole_strs = [TreysCard.int_to_str(int(c)) for c in hole_cards]
+            board_strs = [TreysCard.int_to_str(int(c)) for c in community_cards]
+
+            # 2. 準備一副牌，移除已知牌
+            deck = Deck()
+            known_cards = [TreysCard.new(c) for c in hole_strs + board_strs]
+            for card in known_cards:
+                deck.cards.remove(card)
+
+            # 3. 模擬 500 次
+            wins = 0
+            total = 500
+            for _ in range(total):
+                # 發公共牌直到 5 張
+                sim_board = list(community_cards)  # 複製一份，避免修改原列表
+                remaining_board_count = 5 - len(community_cards)
+                if remaining_board_count > 0:
+                    drawn = deck.draw(remaining_board_count)
+                    sim_board.extend(drawn)
+
+                # 隨機給對手發兩張手牌
+                opp_hole = deck.draw(2)
+
+                # 計算我方和對手的牌力
+                my_score = self.hand_eval.evaluator.evaluate(sim_board, hole_cards)
+                opp_score = self.hand_eval.evaluator.evaluate(sim_board, opp_hole)
+
+                if my_score < opp_score:  # 分數越小牌越強
+                    wins += 1
+
+                # 把牌放回牌堆
+                deck.cards.extend(opp_hole)
+                deck.cards.extend(sim_board[len(community_cards):])
+
+            return wins / total
+        except Exception as e:
+            print(f"[WARN] MC 模擬失敗: {e}")
+            return 0.5

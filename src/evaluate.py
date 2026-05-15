@@ -1,4 +1,6 @@
-# evaluate.py
+import sys
+sys.path.insert(0, '/app/src')
+
 import numpy as np
 from stable_baselines3 import PPO
 from poker_wrapper import PokerGymWrapper
@@ -33,7 +35,6 @@ def evaluate(model_path: str, n_episodes: int = 500, opponent: str = "random"):
     for label, count in zip(action_labels, action_hist):
         bar = "█" * int(count / total * 30)
         print(f"    {label:>9}: {bar} {count/total:.1%}")
-
 
 if __name__ == "__main__":
     evaluate("./models/ppo_poker_cpu", n_episodes=500)
