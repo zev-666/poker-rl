@@ -1,4 +1,5 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, BackgroundTasks
+from db import init_db, save_decision
 from pydantic import BaseModel
 from typing import List, Optional
 import torch
@@ -9,6 +10,10 @@ from info_set_abstractor import InfoSetAbstractor
 from blueprint_net import BlueprintNet
 
 app = FastAPI(title="Texas Hold'em AI Decision Server")
+
+@app.on_event("startup")
+async def startup_event():
+    await init_db()
 
 # ---------- 載入模型 ----------
 MODEL_PATH = "blueprint_net.pth"
@@ -24,90 +29,65 @@ model.eval()
 evaluator = HandEvaluator()
 abstractor = InfoSetAbstractor()
 
-# 載入策略表（可選，供評估用）
-try:
-    with open(STRATEGY_PATH, 'rb') as f:
-        strategy_data = pickle.load(f)
-except:
-    strategy_data = None
+with open(STRATEGY_PATH, "rb") as f:
+    strategy = pickle.load(f)
 
-# ---------- 請求 / 回應格式 ----------
-class GameState(BaseModel):
-    round_idx: int               # 0=preflop,1=flop,2=turn,3=river
-    hole_cards: List[str]        # e.g. ["Ah","Kh"]
-    community_cards: List[str]   # e.g. ["Qh","Jh","Th","2c","3d"]
-    bet_history: List[float]     # 過去下注金額
-    pot_size: float
-    stack_size: float
+# ---------- 請求/回應格式 ----------
+class DecisionRequest(BaseModel):
+    round_idx: int
+    hole_cards: List[str]
+    community_cards: List[str]
+    bet_history: List[int]
+    pot_size: int
+    stack_size: int
 
 class DecisionResponse(BaseModel):
-    action: str                  # "fold", "call", "raise"
-    confidence: float
-    action_values: List[float]   # [fold_value, call_value, raise_value]
-
-# ---------- 特徵工程（與訓練時一致） ----------
-def extract_features(gs: GameState):
-    features = []
-    # 回合 one-hot (4)
-    round_oh = [0]*4
-    round_oh[min(gs.round_idx, 3)] = 1
-    features.extend(round_oh)
-    
-    # 下注比例
-    if gs.bet_history and gs.pot_size > 0:
-        features.append(gs.bet_history[-1] / gs.pot_size)
-    else:
-        features.append(0.0)
-    
-    # 籌碼深度
-    features.append(gs.stack_size / max(gs.pot_size, 1))
-    
-    # 手牌強度歸一化
-    if len(gs.community_cards) >= 3:
-        score = evaluator.evaluate(gs.hole_cards, gs.community_cards)
-        features.append(score / 7462.0)
-    else:
-        features.append(0.0)
-    
-    # 公共牌紋理歸一化
-    if len(gs.community_cards) >= 3:
-        texture = abstractor.classify_board(gs.community_cards[:3]).value
-        features.append(texture / 10.0)
-    else:
-        features.append(0.0)
-    
-    # 補到 9 維
-    while len(features) < 9:
-        features.append(0.0)
-    return np.array(features[:9], dtype=np.float32)
+    action: str
 
 # ---------- 決策端點 ----------
 @app.post("/decide", response_model=DecisionResponse)
-def decide(gs: GameState):
-    try:
-        x = torch.from_numpy(extract_features(gs)).unsqueeze(0).to(device)
-        with torch.no_grad():
-            values = model(x).cpu().numpy().flatten()  # [fold, call, raise]
-        
-        # 簡單規則：最大值的動作；若 call 和 raise 接近時可自行調整策略
-        action_idx = int(np.argmax(values))
-        action_map = {0: "fold", 1: "call", 2: "raise"}
-        action = action_map[action_idx]
-        
-        # 信心值 = softmax 最大值
-        exp_vals = np.exp(values - np.max(values))
-        probs = exp_vals / exp_vals.sum()
-        confidence = float(probs[action_idx])
-        
-        return DecisionResponse(
-            action=action,
-            confidence=confidence,
-            action_values=values.tolist()
-        )
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+async def decide(request: DecisionRequest, background_tasks: BackgroundTasks):
+    hole = request.hole_cards
+    community = request.community_cards
+    history = request.bet_history
+    pot = request.pot_size
+    stack = request.stack_size
 
-# ---------- 健康檢查 ----------
-@app.get("/health")
-def health():
-    return {"status": "ok", "model_loaded": True}
+    # 使用 encode 產生資訊集
+    info_set = abstractor.encode(
+        game_round=request.round_idx,
+        bet_history=history,
+        board_cards=community,
+        pot_size=pot,
+        stack_size=stack
+    )
+
+    # 查詢策略表
+    if info_set in strategy:
+        probs = strategy[info_set]
+    else:
+        # fallback: 使用神經網路
+        features = np.array([len(community), pot / (pot + stack), len(history)], dtype=np.float32)
+        features = np.concatenate([features, np.zeros(6, dtype=np.float32)])  # 補齊 9 維
+        tensor = torch.tensor(features, device=device, dtype=torch.float32).unsqueeze(0)
+        with torch.no_grad():
+            out = model(tensor).softmax(dim=-1).cpu().numpy().flatten()
+        probs = {"fold": float(out[0]), "call": float(out[1]), "raise": float(out[2])}
+
+    # 選擇最大機率動作
+    action = max(probs, key=probs.get)
+
+    # ----- 背景寫入資料庫 -----
+    log_data = {
+        "round_idx": request.round_idx,
+        "hole_cards": hole,
+        "community_cards": community,
+        "bet_history": history,
+        "pot_size": pot,
+        "stack_size": stack,
+        "action_taken": action,
+        "strategy_used": "mccfr_blueprint"
+    }
+    background_tasks.add_task(save_decision, log_data)
+
+    return DecisionResponse(action=action)
