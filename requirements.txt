@@ -1,0 +1,14 @@
+# SB3 及進度條所需
+stable-baselines3==2.3.2
+gymnasium==0.29.1
+tqdm
+rich
+
+# 撲克底層依賴
+treys==0.1.7
+
+# 監控與工具
+tensorboard==2.17.0
+numpy==1.26.4
+pandas==2.2.2
+matplotlib==3.9.0

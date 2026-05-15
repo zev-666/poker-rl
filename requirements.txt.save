@@ -1,0 +1,11 @@
+ PyTorch DirectML（锁死版本）
+
+# SB3
+stable-baselines3==2.3.2
+gymnasium==0.29.1
+
+# 监控与工具
+tensorboard==2.17.0
+numpy==1.26.4
+pandas==2.2.2
+matplotlib==3.9.0
