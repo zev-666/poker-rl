@@ -8,21 +8,21 @@ from poker_wrapper import PokerGymWrapper
 from poker_model import POLICY_KWARGS
 from callbacks import PokerMetricsCallback, EarlyStopOnWinRate
 
-# ── 设备（CPU 稳定模式）────────────────────────────────
+# 设备（CPU 稳定模式）
 device = 'cpu'
 print("使用 CPU 训练")
 
-# ── 超参数 ────────────────────────────────────────────
+# 超参数
 PPO_PARAMS = dict(
     policy          = "MlpPolicy",
     policy_kwargs   = POLICY_KWARGS,
-    n_steps         = 512,        # 小步快跑
+    n_steps         = 512,
     batch_size      = 256,
     n_epochs        = 10,
     learning_rate   = 3e-4,
     gamma           = 0.99,
     gae_lambda      = 0.95,
-    ent_coef        = 0.02,       # 增加探索，避免过早锁定策略
+    ent_coef        = 0.05,       # 提高探索，鼓励弃牌
     vf_coef         = 0.5,
     max_grad_norm   = 0.5,
     verbose         = 1,
@@ -30,7 +30,7 @@ PPO_PARAMS = dict(
     device          = device,
 )
 
-N_ENVS = 1   # 单环境最稳定
+N_ENVS = 1
 
 def make_env(rank: int, opponent: str = "random"):
     def _init():
@@ -44,7 +44,7 @@ def train():
     os.makedirs("./models",    exist_ok=True)
     os.makedirs("./checkpoints", exist_ok=True)
 
-    # ── 第一阶段：vs 随机对手 ──────────────────────────
+    # 第一阶段：vs 随机对手
     envs = DummyVecEnv([make_env(i, "random") for i in range(N_ENVS)])
     envs = VecNormalize(envs, norm_obs=True, norm_reward=True)
 
@@ -77,7 +77,7 @@ def train():
     envs.save("vec_normalize_stage1.pkl")
     print("第一階段完成！")
 
-    # ── 第二阶段：vs 跟注站对手 ────────────────────────
+    # 第二阶段：vs 跟注站对手
     envs2 = DummyVecEnv([make_env(i, "call_always") for i in range(N_ENVS)])
     envs2 = VecNormalize(envs2, norm_obs=True, norm_reward=True)
     model.set_env(envs2)
