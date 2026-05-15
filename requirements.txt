@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 filelock==3.29.0
 fsspec==2026.4.0
 Jinja2==3.1.6
@@ -18,3 +19,19 @@ treys
 fastapi
 uvicorn
 tqdm
+=======
+# SB3 及進度條所需
+stable-baselines3==2.3.2
+gymnasium==0.29.1
+tqdm
+rich
+
+# 撲克底層依賴
+treys==0.1.7
+
+# 監控與工具
+tensorboard==2.17.0
+numpy==1.26.4
+pandas==2.2.2
+matplotlib==3.9.0
+>>>>>>> ace484a432d58d12d1c101ba5f560c88b4765b18

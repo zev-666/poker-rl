@@ -36,4 +36,4 @@ def evaluate(model_path: str, n_episodes: int = 500, opponent: str = "random"):
 
 
 if __name__ == "__main__":
-    evaluate("./models/stage2_final.zip", n_episodes=500)
+    evaluate("./models/ppo_poker_cpu", n_episodes=500)
