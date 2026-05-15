@@ -15,3 +15,6 @@ treys==0.1.8
 typing_extensions==4.15.0
 treys
 treys
+fastapi
+uvicorn
+tqdm
