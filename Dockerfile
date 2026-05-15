@@ -2,21 +2,21 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+# 系統依賴
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
-# 1. 安装 PyTorch CPU 版（2.4.1 兼容 directml）
+# 先安裝 PyTorch（固定版本）
 RUN pip install --no-cache-dir torch==2.4.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
 
-# 2. 安装 DirectML 后端（调用 AMD 显卡）
-RUN pip install --no-cache-dir torch-directml==0.2.5.dev240914
-
-# 3. 复制 requirements.txt 并安装其余依赖（不含 torch）
+# 安裝其餘 Python 套件
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4. 复制修改过的 pokerenv 源码
-COPY pokerenv_pkg/ /usr/local/lib/python3.11/site-packages/pokerenv/
+# 複製全部專案檔案（包含模型）
+COPY . .
 
-EXPOSE 6006
-
-CMD ["python", "train.py"]
+# 啟動 API 伺服器
+EXPOSE 8000
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
